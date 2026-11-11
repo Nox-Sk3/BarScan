@@ -99,8 +99,8 @@
     const MIN_SHARP = 2.0;        // ความคมขั้นต่ำ (ต่ำกว่านี้ถือว่าไม่มีอะไรให้อ่าน)
     const SHARP_RATIO = 0.8;      // ต้องคมอย่างน้อย 80% ของเฟรมที่ดีที่สุดล่าสุด
     const CONFIRM_NEED = 2;       // ต้องอ่านได้ตรงกันกี่ครั้ง
-    const HISTORY_SIZE = 4;       // ดูย้อนหลังกี่รอบ
-    const HISTORY_TTL = 3500;     // ผลที่เก่ากว่านี้ (ms) ไม่นับ
+    const HISTORY_SIZE = 6;       // ดูย้อนหลังกี่รอบ
+    const HISTORY_TTL = 8000;     // ผลที่เก่ากว่านี้ (ms) ไม่นับ
     const PAUSE_AFTER_SAVE = 1200;
     const RESET_AFTER_IDLE = 3000; // ไม่เจอรหัสนาน 3 วิ = สแกนรหัสเดิมซ้ำได้
 
@@ -387,6 +387,13 @@
         return toDigit[ch] || null;
     }
 
+    // 4 ตัวแรกคือ วัน/เดือน (DDMM) ต้องเป็นวันที่ที่เป็นไปได้
+    function validDate(head) {
+        const day = parseInt(head.slice(0, 2), 10);
+        const month = parseInt(head.slice(2, 4), 10);
+        return day >= 1 && day <= 31 && month >= 1 && month <= 12;
+    }
+
     function parseBarcode(raw) {
         const s = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
         for (const letterLen of [1, 2]) {
@@ -398,7 +405,7 @@
                 const letters = w.substr(7, letterLen);
                 if (ok && !/^[A-Z]+$/.test(letters)) ok = false;
                 for (let k = 7 + letterLen; k < len && ok; k++) { const c = asDigit(w[k]); if (c === null) ok = false; else tail += c; }
-                if (ok) return `${head}${letters}${tail}`;
+                if (ok && validDate(head)) return `${head}${letters}${tail}`;
             }
         }
         return null;
@@ -462,6 +469,43 @@
         return found;
     }
 
+    // วัน/เดือน (4 ตัวแรก) ที่พบบ่อยที่สุดในรายการที่บันทึกไว้ (ต้องมีอย่างน้อย 3 รายการ)
+    function modalDate() {
+        const lines = resultText.value.split('\n').map(l => l.trim()).filter(l => l.length >= 4);
+        if (lines.length < 3) return null;
+        const cnt = {};
+        lines.forEach(l => { const d = l.slice(0, 4); cnt[d] = (cnt[d] || 0) + 1; });
+        let best = null;
+        for (const d in cnt) if (best === null || cnt[d] > cnt[best]) best = d;
+        return best;
+    }
+
+    function hasPending() {
+        const now = Date.now();
+        return history.some(e => now - e.t < HISTORY_TTL);
+    }
+
+    // โหวตทีละตำแหน่งตัวอักษร ใช้เมื่อมีผลอ่านความยาวเท่ากันอย่างน้อย 3 รอบ
+    // และทุกตำแหน่งต้องมีเสียงข้างมากอย่างน้อย 2 เสียง
+    function consensus(codes) {
+        const byLen = {};
+        codes.forEach(c => (byLen[c.length] = byLen[c.length] || []).push(c));
+        for (const len in byLen) {
+            const g = byLen[len];
+            if (g.length < 3) continue;
+            let out = '', ok = true;
+            for (let i = 0; i < +len && ok; i++) {
+                const cnt = {};
+                g.forEach(c => { cnt[c[i]] = (cnt[c[i]] || 0) + 1; });
+                let best = null;
+                for (const ch in cnt) if (best === null || cnt[ch] > cnt[best]) best = ch;
+                if (cnt[best] < 2) ok = false; else out += best;
+            }
+            if (ok) return out;
+        }
+        return null;
+    }
+
     function handleRead(code) {
         const now = Date.now();
         if (!code) return;
@@ -469,23 +513,40 @@
         history = history.filter(e => now - e.t < HISTORY_TTL);
         history.push({ code, t: now });
         if (history.length > HISTORY_SIZE) history.shift();
+        rawTextEl.innerText += `\nผลที่ผ่านมา: ${history.map(e => e.code).join(' | ')}`;
 
-        const votes = history.filter(e => e.code === code).length;
         if (code === lastSaved) {
             setStatus(`✓ บันทึกแล้ว: ${code} (ขยับไปป้ายอื่นได้เลย)`, "#00ff66");
             return;
         }
-        if (votes >= CONFIRM_NEED) {
-            addCode(code);
-            lastSaved = code;
+
+        const votes = history.filter(e => e.code === code).length;
+        let accepted = null;
+        if (votes >= CONFIRM_NEED) accepted = code;
+        else accepted = consensus(history.map(e => e.code));
+
+        if (accepted && accepted === lastSaved) {
+            setStatus(`✓ บันทึกแล้ว: ${accepted} (ขยับไปป้ายอื่นได้เลย)`, "#00ff66");
+            return;
+        }
+        if (accepted) {
+            const usualDate = modalDate();
+            addCode(accepted);
+            lastSaved = accepted;
             history = [];
             pauseUntil = now + PAUSE_AFTER_SAVE;
             if (navigator.vibrate) navigator.vibrate(150);
             playBeep();
             flashGuide();
-            setStatus(`✓ บันทึกสำเร็จ: ${code}`, "#00ff66");
+            if (usualDate && accepted.slice(0, 4) !== usualDate) {
+                // บันทึกแล้ว แต่เตือนว่าวันที่ต่างจากส่วนใหญ่ในชุดนี้ (อาจอ่านผิด หรือเป็นป้ายคนละวันจริง)
+                setTimeout(playBeep, 220);
+                setStatus(`⚠️ บันทึกแล้ว: ${accepted} แต่วันที่ ${accepted.slice(0, 4)} ต่างจากส่วนใหญ่ (${usualDate}) ตรวจอีกที`, "#ff9500");
+            } else {
+                setStatus(`✓ บันทึกสำเร็จ: ${accepted}`, "#00ff66");
+            }
         } else {
-            setStatus(`อ่านได้ ${code} กำลังยืนยัน...`, "#ffcc00");
+            setStatus(`อ่านได้ ${code} (ยืนยัน ${Math.min(votes, CONFIRM_NEED)}/${CONFIRM_NEED}) ถือนิ่งต่ออีกนิด`, "#ffcc00");
         }
     }
 
@@ -506,14 +567,14 @@
                     try {
                         const code = await processFrame();
                         if (code) handleRead(code);
-                        else if (!statusEl.innerText.startsWith('✓')) setStatus("กำลังหาตัวเลข... ถือป้ายให้อยู่ในกรอบและนิ่งสักครู่", "#ffcc00");
+                        else if (!hasPending() && !statusEl.innerText.startsWith('✓')) setStatus("กำลังหาตัวเลข... ถือป้ายให้อยู่ในกรอบและนิ่งสักครู่", "#ffcc00");
                     } finally {
                         busy = false;
                     }
                 } else if (s < MIN_SHARP) {
-                    setStatus("ยังไม่เจอป้าย ส่องป้ายเข้ามาในกรอบ", "#ffcc00");
+                    if (!hasPending()) setStatus("ยังไม่เจอป้าย ส่องป้ายเข้ามาในกรอบ", "#ffcc00");
                 } else {
-                    setStatus("ภาพเบลอ รอเฟรมที่คม...", "#ff9500");
+                    if (!hasPending()) setStatus("ภาพเบลอ รอเฟรมที่คม...", "#ff9500");
                 }
             }
         } catch (err) {
