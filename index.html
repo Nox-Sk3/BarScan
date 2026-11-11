@@ -4,36 +4,41 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Live Text Scanner 3s</title>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #fff; padding: 12px; }
         .container { max-width: 500px; margin: 0 auto; }
-        
+
         .camera-box { position: relative; width: 100%; height: 320px; background: #000; border-radius: 16px; overflow: hidden; margin-bottom: 12px; border: 2px solid #333; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        
-        /* กรอบเล็งเป้า */
-        .scan-guide { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 85%; height: 120px; border: 2px dashed #00ff66; border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4); pointer-events: none; display: flex; align-items: center; justify-content: center; }
-        .scan-guide::after { content: "วางชุดตัวเลขให้อยู่ในกรอบนี้"; color: #00ff66; font-size: 0.8rem; background: rgba(0,0,0,0.7); padding: 2px 8px; border-radius: 4px; }
 
-        /* ตัวนับถอยหลัง */
+        /* กรอบเล็งเป้า */
+        .scan-guide { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 85%; height: 120px; border: 2px dashed #00ff66; border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4); pointer-events: none; }
+        /* ย้ายข้อความไว้เหนือกรอบ ไม่ให้บังตัวเลข */
+        .scan-guide::after { content: "วางชุดตัวเลขให้อยู่ในกรอบนี้"; position: absolute; top: -28px; left: 50%; transform: translateX(-50%); white-space: nowrap; color: #00ff66; font-size: 0.8rem; background: rgba(0,0,0,0.7); padding: 2px 8px; border-radius: 4px; }
+
         .countdown-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center; font-size: 5rem; font-weight: bold; color: #00ff66; z-index: 10; }
 
-        .btn-scan { width: 100%; background: #007aff; color: white; border: none; padding: 18px; border-radius: 12px; font-size: 1.2rem; font-weight: bold; cursor: pointer; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(0,122,255,0.4); active { background: #0056b3; } }
+        .btn-scan { width: 100%; background: #007aff; color: white; border: none; padding: 18px; border-radius: 12px; font-size: 1.2rem; font-weight: bold; cursor: pointer; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(0,122,255,0.4); }
+        .btn-scan:active { background: #0056b3; }
         .btn-scan:disabled { background: #444; color: #888; box-shadow: none; }
 
-        .status { text-align: center; font-size: 0.95rem; margin-bottom: 12px; min-height: 24px; color: #ffcc00; font-weight: 500; }
-        
+        .status { text-align: center; font-size: 0.95rem; margin-bottom: 8px; min-height: 24px; color: #ffcc00; font-weight: 500; }
+
+        /* ภาพที่ตัดส่งให้ OCR + ข้อความดิบ ไว้ดีบั๊ก */
+        .debug { margin-bottom: 12px; display: none; }
+        .debug canvas { width: 100%; height: auto; max-height: 90px; object-fit: contain; background: #000; border-radius: 6px; border: 1px solid #333; }
+        .debug pre { font-size: 0.75rem; color: #888; margin-top: 4px; white-space: pre-wrap; word-break: break-all; }
+
         .result-box { background: #1e1e1e; border-radius: 12px; padding: 12px; }
         .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.9rem; color: #aaa; }
         textarea { width: 100%; height: 180px; background: #2a2a2a; color: #00ff66; border: 1px solid #444; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 1.05rem; resize: none; line-height: 1.4; }
-        
+
         .action-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
         .btn-action { padding: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; color: white; }
         .btn-share { background: #34c759; }
         .btn-clear { background: #ff3b30; }
-        canvas { display: none; }
     </style>
 </head>
 <body>
@@ -41,20 +46,25 @@
 <div class="container">
     <div class="camera-box">
         <video id="webcam" autoplay playsinline muted></video>
-        <div class="scan-guide"></div>
+        <div class="scan-guide" id="guide"></div>
         <div id="countdown" class="countdown-overlay">3</div>
     </div>
 
-    <button id="btnStartScan" class="btn-scan">📸 กดสแกน (นับถอยหลัง 3 วิ)</button>
-    
-    <div id="status" class="status">เปิดกล้องแล้ว ส่องตัวเลขให้อยู่ในกรอบแล้วกดปุ่ม</div>
+    <button id="btnStartScan" class="btn-scan" disabled>⏳ กำลังโหลดตัวอ่าน...</button>
+
+    <div id="status" class="status">กำลังเปิดกล้อง...</div>
+
+    <div id="debug" class="debug">
+        <canvas id="captureCanvas"></canvas>
+        <pre id="rawText"></pre>
+    </div>
 
     <div class="result-box">
         <div class="result-header">
             <span>รายการที่บันทึก (<span id="count">0</span>)</span>
         </div>
         <textarea id="resultText" placeholder="ข้อมูลตัวเลขจะมาเรียงที่นี่ทีละบรรทัด..."></textarea>
-        
+
         <div class="action-btns">
             <button id="btnShare" class="btn-action btn-share">📤 ส่งออก / แชร์</button>
             <button id="btnClear" class="btn-action btn-clear">ล้างทั้งหมด</button>
@@ -62,35 +72,221 @@
     </div>
 </div>
 
-<canvas id="captureCanvas"></canvas>
-
 <script>
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('captureCanvas');
+    const guideEl = document.getElementById('guide');
     const btnStartScan = document.getElementById('btnStartScan');
     const countdownEl = document.getElementById('countdown');
     const statusEl = document.getElementById('status');
     const resultText = document.getElementById('resultText');
     const countSpan = document.getElementById('count');
+    const debugBox = document.getElementById('debug');
+    const rawTextEl = document.getElementById('rawText');
 
-    // แพตเทิร์นจับเฉพาะตัวเลขบาร์โค้ด เช่น 1111014 E 70011 00000 หรือ 0811001 E 77000 77150
-    const barcodeRegex = /(\d{7})\s*([A-Za-z]{1,2})\s*(\d{5})\s*(\d{5})/;
+    let worker = null;
+    let cameraReady = false;
+    let ocrReady = false;
 
-    // เปิดกล้อง iPhone อัตโนมัติ
+    function setStatus(msg, color) {
+        statusEl.innerText = msg;
+        statusEl.style.color = color || "#ffcc00";
+    }
+
+    function refreshButton() {
+        if (cameraReady && ocrReady) {
+            btnStartScan.disabled = false;
+            btnStartScan.innerText = "📸 กดสแกน (นับถอยหลัง 3 วิ)";
+            setStatus("พร้อมแล้ว ส่องตัวเลขให้อยู่ในกรอบแล้วกดปุ่ม");
+        }
+    }
+
+    // ---------- กล้อง ----------
     async function initCamera() {
+        if (!window.isSecureContext || !navigator.mediaDevices) {
+            setStatus("❌ ต้องเปิดผ่าน https:// หรือ localhost เท่านั้น (เปิดเป็นไฟล์ตรงๆ กล้องจะไม่ทำงาน)", "#ff3b30");
+            return;
+        }
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: {
                     facingMode: { ideal: "environment" },
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
-                }
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                },
+                audio: false
             });
             video.srcObject = stream;
+            await video.play();
+
+            // พยายามขอโฟกัสต่อเนื่อง (บางเครื่องไม่รองรับ ก็ข้ามไป)
+            try {
+                const track = stream.getVideoTracks()[0];
+                await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+            } catch (e) {}
+
+            cameraReady = true;
+            refreshButton();
         } catch (err) {
-            statusEl.innerText = "❌ ไม่สามารถเข้าถึงกล้องได้ กรุณากดอนุญาตสิทธิ์ใช้งานกล้อง";
-            statusEl.style.color = "#ff3b30";
+            setStatus("❌ ไม่สามารถเข้าถึงกล้องได้ กรุณากดอนุญาตสิทธิ์ใช้งานกล้อง", "#ff3b30");
         }
+    }
+
+    // ---------- โหลด OCR ครั้งเดียวตอนเปิดหน้า ----------
+    async function initOCR() {
+        try {
+            if (typeof Tesseract === 'undefined') throw new Error('โหลด Tesseract ไม่สำเร็จ');
+            worker = await Tesseract.createWorker('eng');
+            await worker.setParameters({
+                tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ ',
+                preserve_interword_spaces: '1',
+            });
+            ocrReady = true;
+            refreshButton();
+        } catch (err) {
+            console.error(err);
+            setStatus("❌ โหลดตัวอ่านไม่สำเร็จ (ต้องต่ออินเทอร์เน็ต) ลองรีเฟรชหน้า", "#ff3b30");
+        }
+    }
+
+    // ---------- ตัดเฉพาะส่วนในกรอบเขียว ----------
+    // วิดีโอใช้ object-fit: cover ภาพจริงจึงถูกครอป ต้องแปลงพิกัดบนจอ -> พิกัดในภาพวิดีโอ
+    function cropGuideToCanvas() {
+        const vw = video.videoWidth, vh = video.videoHeight;
+        const box = video.getBoundingClientRect();
+        const g = guideEl.getBoundingClientRect();
+
+        const scale = Math.max(box.width / vw, box.height / vh);
+        const offX = (vw * scale - box.width) / 2;
+        const offY = (vh * scale - box.height) / 2;
+
+        let sx = (g.left - box.left + offX) / scale;
+        let sy = (g.top - box.top + offY) / scale;
+        let sw = g.width / scale;
+        let sh = g.height / scale;
+
+        // เผื่อขอบเล็กน้อย กันตัวเลขชิดขอบ
+        const padX = sw * 0.03, padY = sh * 0.1;
+        sx = Math.max(0, sx - padX); sy = Math.max(0, sy - padY);
+        sw = Math.min(vw - sx, sw + padX * 2); sh = Math.min(vh - sy, sh + padY * 2);
+
+        // ขยายให้กว้างประมาณ 1400px (ตัวหนังสือเล็กอ่านยาก)
+        const up = Math.min(4, Math.max(1, 1400 / sw));
+        canvas.width = Math.round(sw * up);
+        canvas.height = Math.round(sh * up);
+
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+
+        // แปลงเป็นขาวดำ + ดึงคอนทราสต์
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const d = img.data;
+        const hist = new Uint32Array(256);
+        for (let i = 0; i < d.length; i += 4) {
+            const y = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+            d[i] = y; hist[y]++;
+        }
+        const total = canvas.width * canvas.height;
+        let lo = 0, hi = 255, acc = 0;
+        for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc > total * 0.02) { lo = v; break; } }
+        acc = 0;
+        for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > total * 0.02) { hi = v; break; } }
+        const range = Math.max(1, hi - lo);
+        for (let i = 0; i < d.length; i += 4) {
+            let y = ((d[i] - lo) * 255) / range;
+            y = y < 0 ? 0 : y > 255 ? 255 : y;
+            d[i] = d[i + 1] = d[i + 2] = y;
+        }
+        ctx.putImageData(img, 0, 0);
+
+        debugBox.style.display = 'block';
+    }
+
+    // ---------- แกะรูปแบบ 7 หลัก + ตัวอักษร + 5 + 5 แบบยืดหยุ่น ----------
+    const toDigit = { O: '0', Q: '0', D: '0', I: '1', L: '1', '|': '1', Z: '2', S: '5', G: '6', B: '8' };
+
+    function asDigit(ch) {
+        if (/\d/.test(ch)) return ch;
+        return toDigit[ch] || null;
+    }
+
+    function parseBarcode(raw) {
+        // เอาเฉพาะ A-Z และ 0-9 ติดกันหมด (ไม่สนช่องว่างที่ OCR ใส่มั่ว)
+        const s = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        for (const letterLen of [1, 2]) {
+            const len = 7 + letterLen + 10;
+            for (let i = 0; i + len <= s.length; i++) {
+                const w = s.substr(i, len);
+                let head = '', tail = '', ok = true;
+                for (let k = 0; k < 7 && ok; k++) { const c = asDigit(w[k]); if (c === null) ok = false; else head += c; }
+                const letters = w.substr(7, letterLen);
+                if (ok && !/^[A-Z]+$/.test(letters)) ok = false;
+                for (let k = 7 + letterLen; k < len && ok; k++) { const c = asDigit(w[k]); if (c === null) ok = false; else tail += c; }
+                if (ok) return `${head} ${letters} ${tail.slice(0, 5)} ${tail.slice(5)}`;
+            }
+        }
+        return null;
+    }
+
+    // ---------- นับถอยหลัง ----------
+    btnStartScan.addEventListener('click', () => {
+        btnStartScan.disabled = true;
+        countdownEl.style.display = 'flex';
+        let count = 3;
+        countdownEl.innerText = count;
+        setStatus("ถือเครื่องนิ่งๆ ระบบกำลังโฟกัสภาพ...");
+
+        const timer = setInterval(() => {
+            count--;
+            if (count > 0) {
+                countdownEl.innerText = count;
+            } else {
+                clearInterval(timer);
+                countdownEl.style.display = 'none';
+                captureAndProcess();
+            }
+        }, 1000);
+    });
+
+    async function captureAndProcess() {
+        setStatus("⌛ กำลังอ่านตัวเลขจากภาพ...");
+
+        try {
+            if (!video.videoWidth) throw new Error('กล้องยังไม่พร้อม');
+            cropGuideToCanvas();
+
+            let found = null, rawAll = '';
+            // ลองอ่านเป็นบรรทัดเดียวก่อน ถ้าไม่เจอลองโหมดบล็อกข้อความ
+            for (const psm of ['7', '6']) {
+                await worker.setParameters({ tessedit_pageseg_mode: psm });
+                const ret = await worker.recognize(canvas);
+                const text = ret.data.text || '';
+                rawAll += `[psm ${psm}] ${text.trim()}\n`;
+                found = parseBarcode(text);
+                if (found) break;
+            }
+            rawTextEl.innerText = "OCR อ่านได้:\n" + rawAll;
+
+            if (found) {
+                if (resultText.value.length > 0 && !resultText.value.endsWith('\n')) {
+                    resultText.value += '\n';
+                }
+                resultText.value += found;
+                updateCount();
+
+                if (navigator.vibrate) navigator.vibrate(150);
+                playBeep();
+                setStatus(`✓ บันทึกสำเร็จ: ${found}`, "#00ff66");
+            } else {
+                setStatus("⚠️ อ่านไม่เจอตัวเลข ลองถอยให้ภาพคมชัด แสงพอ และให้ตัวเลขอยู่กลางกรอบ", "#ff9500");
+            }
+        } catch (err) {
+            console.error(err);
+            setStatus("❌ เกิดข้อผิดพลาด: " + err.message, "#ff3b30");
+        }
+
+        btnStartScan.disabled = false;
     }
 
     function updateCount() {
@@ -110,107 +306,28 @@
         } catch (e) {}
     }
 
-    // เริ่มกระบวนการนับถอยหลัง 3 วินาที
-    btnStartScan.addEventListener('click', () => {
-        btnStartScan.disabled = true;
-        countdownEl.style.display = 'flex';
-        let count = 3;
-        countdownEl.innerText = count;
-
-        statusEl.innerText = "ถือนิ้วไว้นิ่งๆ ระบบกำลังโฟกัสภาพ...";
-        statusEl.style.color = "#ffcc00";
-
-        const timer = setInterval(() => {
-            count--;
-            if (count > 0) {
-                countdownEl.innerText = count;
-            } else {
-                clearInterval(timer);
-                countdownEl.style.display = 'none';
-                captureAndProcess();
-            }
-        }, 1000);
-    });
-
-    // จับภาพจากกล้องแล้วส่งไปประมวลผล OCR
-    async function captureAndProcess() {
-        statusEl.innerText = "⌛ กำลังอ่านตัวเลขจากภาพ...";
-        
-        // วาดภาพจากวิดีโอลง canvas
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        try {
-            const worker = await Tesseract.createWorker('eng');
-            await worker.setParameters({
-                tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ ',
-            });
-
-            const ret = await worker.recognize(canvas);
-            await worker.terminate();
-
-            const text = ret.data.text;
-            console.log("OCR Result:", text);
-
-            const match = text.match(barcodeRegex);
-
-            if (match) {
-                const formattedCode = `${match[1]} ${match[2].toUpperCase()} ${match[3]} ${match[4]}`;
-                
-                // บันทึกลง textarea
-                if (resultText.value.length > 0 && !resultText.value.endsWith('\n')) {
-                    resultText.value += '\n';
-                }
-                resultText.value += formattedCode;
-                updateCount();
-
-                if (navigator.vibrate) navigator.vibrate(150);
-                playBeep();
-
-                statusEl.innerText = `✓ บันทึกสำเร็จ: ${formattedCode}`;
-                statusEl.style.color = "#00ff66";
-            } else {
-                statusEl.innerText = "⚠️ อ่านไม่เจอตัวเลข! ลองขยับมุมกล้องให้อยู่ในกรอบแล้วกดใหม่";
-                statusEl.style.color = "#ff9500";
-            }
-        } catch (err) {
-            console.error(err);
-            statusEl.innerText = "❌ เกิดข้อผิดพลาดในการอ่านภาพ";
-            statusEl.style.color = "#ff3b30";
-        }
-
-        btnStartScan.disabled = false;
-    }
-
-    // ปุ่มแชร์ข้อมูล
     document.getElementById('btnShare').addEventListener('click', async () => {
         const text = resultText.value.trim();
         if (!text) return alert('ยังไม่มีข้อมูลให้ส่งออก');
 
         if (navigator.share) {
-            try {
-                await navigator.share({ title: 'รายการบาร์โค้ด', text: text });
-            } catch (err) {}
+            try { await navigator.share({ title: 'รายการบาร์โค้ด', text: text }); } catch (err) {}
         } else {
             navigator.clipboard.writeText(text);
             alert('คัดลอกข้อความลง Clipboard แล้ว!');
         }
     });
 
-    // ปุ่มล้างข้อมูล
     document.getElementById('btnClear').addEventListener('click', () => {
         if (confirm('ต้องการล้างข้อมูลทั้งหมดหรือไม่?')) {
             resultText.value = '';
             updateCount();
-            statusEl.innerText = 'ล้างข้อมูลเรียบร้อย';
-            statusEl.style.color = "#ffcc00";
+            setStatus('ล้างข้อมูลเรียบร้อย');
         }
     });
 
-    // เปิดกล้องทันทีที่เข้าเว็บ
     initCamera();
+    initOCR();
 </script>
 
 </body>
