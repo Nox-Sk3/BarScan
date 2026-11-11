@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>iOS Continuous Barcode Scanner</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- HTML5-QRCode Library for Fast Camera Barcode Scanning -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Custom video viewport inside scanner box */
+        #reader video {
+            object-fit: cover !important;
+            border-radius: 0.75rem;
+        }
+        #reader {
+            border: none !important;
+        }
+        #reader__scan_region {
+            background: rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-blue-600 selection:text-white">
+
+    <!-- Header Bar -->
+    <header class="bg-slate-800/90 backdrop-blur border-b border-slate-700/80 sticky top-0 z-30 px-4 py-3 flex items-center justify-between shadow-md">
+        <div class="flex items-center space-x-2">
+            <div class="p-2 bg-blue-600/20 text-blue-400 rounded-lg">
+                <i data-lucide="scan-barcode" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h1 class="text-base font-bold leading-tight text-white">Barcode Scanner</h1>
+                <p class="text-xs text-slate-400">iOS Batch Scan to Text</p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-2">
+            <span id="scan-count" class="bg-blue-600 text-white text-xs font-bold px-2.5 py-1 rounded-full shadow-inner">
+                0 รายการ
+            </span>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-1 max-w-md w-full mx-auto p-4 flex flex-col space-y-4">
+
+        <!-- Camera Scanner Viewport Card -->
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-3 shadow-lg flex flex-col items-center">
+            
+            <div class="w-full relative rounded-xl overflow-hidden bg-black aspect-[4/3] flex items-center justify-center">
+                <!-- Camera Video Container -->
+                <div id="reader" class="w-full h-full"></div>
+                
+                <!-- Overlay Guide Box when scanner active -->
+                <div id="scanner-overlay" class="hidden absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+                    <div class="w-3/4 h-1/2 border-2 border-blue-500/80 rounded-lg relative shadow-[0_0_15px_rgba(59,130,246,0.5)]">
+                        <div class="absolute inset-0 bg-blue-500/10 animate-pulse"></div>
+                        <!-- Laser line animation -->
+                        <div class="w-full h-0.5 bg-red-500 shadow-[0_0_8px_#ef4444] absolute top-1/2 -translate-y-1/2"></div>
+                    </div>
+                    <span class="mt-3 text-xs text-slate-300 bg-black/60 px-3 py-1 rounded-full backdrop-blur">
+                        วางบาร์โค้ดให้อยู่ในกรอบ
+                    </span>
+                </div>
+
+                <!-- Initial Idle State Message -->
+                <div id="camera-idle" class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-800">
+                    <i data-lucide="camera" class="w-12 h-12 text-slate-500 mb-2"></i>
+                    <p class="text-sm text-slate-300 font-medium">กดปุ่มด้านล่างเพื่อเปิดกล้องสแกน</p>
+                    <p class="text-xs text-slate-500 mt-1">รองรับการสแกนบาร์โค้ดต่อเนื่องอัตโนมัติ</p>
+                </div>
+            </div>
+
+            <!-- Camera Controls -->
+            <div class="w-full mt-3 flex items-center space-x-2">
+                <button id="btn-toggle-camera" onclick="toggleCamera()" class="flex-1 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold py-2.5 px-4 rounded-xl flex items-center justify-center space-x-2 transition shadow-lg shadow-blue-600/20">
+                    <i data-lucide="power" class="w-5 h-5"></i>
+                    <span id="btn-camera-text">เปิดกล้องสแกน</span>
+                </button>
+                
+                <button id="btn-torch" onclick="toggleTorch()" disabled class="bg-slate-700 text-slate-400 p-2.5 rounded-xl flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed">
+                    <i data-lucide="zap" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <!-- Toast notification area -->
+            <div id="toast" class="hidden w-full mt-2 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs py-1.5 px-3 rounded-lg text-center flex items-center justify-center space-x-1.5">
+                <i data-lucide="check-circle" class="w-4 h-4"></i>
+                <span id="toast-msg">บันทึกบาร์โค้ดสำเร็จ</span>
+            </div>
+        </div>
+
+        <!-- Manual Input Fallback (กรณีบาร์โค้ดจางอ่านไม่ได้) -->
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3">
+            <label class="text-xs font-medium text-slate-400 mb-1.5 flex items-center justify-between">
+                <span>กรณีบาร์โค้ดไม่ชัด (พิมพ์เพิ่มเอง):</span>
+                <span class="text-[10px] text-slate-500">กด Enter เพื่อบันทึก</span>
+            </label>
+            <div class="flex space-x-2">
+                <input type="text" id="manual-input" placeholder="เช่น 0811001 E 77000 77150" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500">
+                <button onclick="addManualEntry()" class="bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition flex items-center space-x-1">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    <span>เพิ่ม</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Scanned Output Text Area Card -->
+        <div class="flex-1 bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-lg flex flex-col min-h-[220px]">
+            <div class="flex items-center justify-between mb-2">
+                <label for="output-text" class="text-sm font-semibold text-slate-200 flex items-center space-x-1.5">
+                    <i data-lucide="file-text" class="w-4 h-4 text-blue-400"></i>
+                    <span>รายการที่สแกนแล้ว (.txt)</span>
+                </label>
+                <button onclick="clearList()" class="text-xs text-rose-400 hover:text-rose-300 flex items-center space-x-1 py-1 px-2 rounded hover:bg-rose-500/10 transition">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                    <span>ล้างข้อมูล</span>
+                </button>
+            </div>
+
+            <!-- Textarea previewing line-by-line result -->
+            <textarea id="output-text" readonly placeholder="ข้อมูลบาร์โค้ดที่สแกนจะมาปรากฏที่นี่ทีละบรรทัด..." class="w-full flex-1 bg-slate-900 border border-slate-700/80 rounded-xl p-3 text-sm font-mono text-emerald-400 placeholder-slate-600 focus:outline-none resize-none leading-relaxed shadow-inner"></textarea>
+
+            <!-- Export Action Buttons Grid -->
+            <div class="grid grid-cols-3 gap-2 mt-3">
+                <!-- Copy Button -->
+                <button onclick="copyToClipboard()" class="bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-slate-100 text-xs font-semibold py-2.5 px-2 rounded-xl flex flex-col items-center justify-center space-y-1 transition border border-slate-600/50">
+                    <i data-lucide="copy" class="w-4 h-4 text-blue-400"></i>
+                    <span>คัดลอกข้อความ</span>
+                </button>
+
+                <!-- Download File Button -->
+                <button onclick="downloadTxtFile()" class="bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-slate-100 text-xs font-semibold py-2.5 px-2 rounded-xl flex flex-col items-center justify-center space-y-1 transition border border-slate-600/50">
+                    <i data-lucide="download" class="w-4 h-4 text-emerald-400"></i>
+                    <span>ดาวน์โหลด .txt</span>
+                </button>
+
+                <!-- iOS Share Sheet Button -->
+                <button onclick="shareData()" class="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-xs font-semibold py-2.5 px-2 rounded-xl flex flex-col items-center justify-center space-y-1 transition shadow-lg shadow-blue-600/20">
+                    <i data-lucide="share" class="w-4 h-4"></i>
+                    <span>ส่งออก (Share)</span>
+                </button>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- App Footer / Instructions -->
+    <footer class="p-3 text-center text-xs text-slate-500 border-t border-slate-800">
+        ออกแบบเพื่อ Safari บน iOS • รองรับสแกนต่อเนื่องและส่งออกผ่าน Share Sheet
+    </footer>
+
+    <!-- Audio Beep Generator using Web Audio API (No External Audio Files Required) -->
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+
+        // State variables
+        let html5QrcodeScanner = null;
+        let isScanning = false;
+        let scannedItems = [];
+        let lastScannedCode = "";
+        let lastScannedTime = 0;
+        const DUPLICATE_COOLDOWN_MS = 2500; // 2.5 seconds duplicate check delay
+        let torchEnabled = false;
+
+        // Web Audio Context for Beep sound
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = null;
+
+        function playBeepSound() {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new AudioContext();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1800, audioCtx.currentTime); // Pitch in Hz
+                
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.15);
+            } catch (e) {
+                console.warn("Audio playback error:", e);
+            }
+
+            // iOS Haptic feedback if supported
+            if (navigator.vibrate) {
+                navigator.vibrate(100);
+            }
+        }
+
+        // Toggle Camera On/Off
+        async function toggleCamera() {
+            if (isScanning) {
+                await stopCamera();
+            } else {
+                await startCamera();
+            }
+        }
+
+        // Start Camera Function
+        async function startCamera() {
+            const btnText = document.getElementById('btn-camera-text');
+            const idleScreen = document.getElementById('camera-idle');
+            const overlay = document.getElementById('scanner-overlay');
+
+            try {
+                if (!html5QrcodeScanner) {
+                    html5QrcodeScanner = new Html5Qrcode("reader");
+                }
+
+                // Camera configuration tailored for barcodes
+                const config = { 
+                    fps: 15, 
+                    qrbox: { width: 260, height: 130 },
+                    aspectRatio: 1.333334,
+                    experimentalFeatures: {
+                        useBarCodeDetectorIfSupported: true
+                    }
+                };
+
+                // Request camera with preference for rear camera (environment)
+                await html5QrcodeScanner.start(
+                    { facingMode: "environment" }, 
+                    config, 
+                    onScanSuccess, 
+                    onScanFailure
+                );
+
+                isScanning = true;
+                btnText.innerText = "ปิดกล้อง";
+                idleScreen.classList.add('hidden');
+                overlay.classList.remove('hidden');
+
+                // Enable flash button if torch capability supported
+                checkTorchSupport();
+
+            } catch (err) {
+                console.error("Camera access error:", err);
+                showToast("ไม่สามารถเปิดกล้องได้ โปรดอนุญาตสิทธิ์การใช้กล้อง", true);
+            }
+        }
+
+        // Stop Camera Function
+        async function stopCamera() {
+            if (html5QrcodeScanner && isScanning) {
+                try {
+                    await html5QrcodeScanner.stop();
+                } catch(e) {
+                    console.warn("Stop scanner error", e);
+                }
+                isScanning = false;
+                document.getElementById('btn-camera-text').innerText = "เปิดกล้องสแกน";
+                document.getElementById('camera-idle').classList.remove('hidden');
+                document.getElementById('scanner-overlay').classList.add('hidden');
+                document.getElementById('btn-torch').disabled = true;
+            }
+        }
+
+        // Check & Enable Torch light if iOS supports it
+        function checkTorchSupport() {
+            try {
+                const torchBtn = document.getElementById('btn-torch');
+                // Check if video track supports torch
+                const track = html5QrcodeScanner.getRunningTrackCapabilities();
+                if (track && track.torch) {
+                    torchBtn.disabled = false;
+                    torchBtn.classList.remove('text-slate-400');
+                    torchBtn.classList.add('text-amber-400', 'hover:bg-slate-700');
+                }
+            } catch(e) {
+                console.log("Torch check:", e);
+            }
+        }
+
+        function toggleTorch() {
+            if (!isScanning || !html5QrcodeScanner) return;
+            torchEnabled = !torchEnabled;
+            html5QrcodeScanner.applyVideoConstraints({
+                advanced: [{ torch: torchEnabled }]
+            }).catch(err => console.warn("Torch failed", err));
+        }
+
+        // Callback when a barcode is scanned successfully
+        function onScanSuccess(decodedText, decodedResult) {
+            const now = Date.now();
+            const cleanText = decodedText.trim();
+
+            if (!cleanText) return;
+
+            // Check duplicate scans within cooldown window
+            if (cleanText === lastScannedCode && (now - lastScannedTime) < DUPLICATE_COOLDOWN_MS) {
+                return; // Ignore repetitive scan
+            }
+
+            lastScannedCode = cleanText;
+            lastScannedTime = now;
+
+            // Add item to list
+            appendScannedItem(cleanText);
+            playBeepSound();
+            showToast(`สแกนแล้ว: ${cleanText}`);
+        }
+
+        function onScanFailure(error) {
+            // Scanning failure is normal continuously while hunting for barcode. Ignore verbose logs.
+        }
+
+        // Append text to output list
+        function appendScannedItem(text) {
+            scannedItems.push(text);
+            updateOutputTextarea();
+        }
+
+        // Manual Input Entry Handler
+        function addManualEntry() {
+            const inputEl = document.getElementById('manual-input');
+            const val = inputEl.value.trim();
+            if (val) {
+                appendScannedItem(val);
+                playBeepSound();
+                showToast(`เพิ่มแล้ว: ${val}`);
+                inputEl.value = '';
+            }
+        }
+
+        // Allow pressing Enter on manual input
+        document.getElementById('manual-input')?.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                addManualEntry();
+            }
+        });
+
+        // Update display text and total count
+        function updateOutputTextarea() {
+            const textarea = document.getElementById('output-text');
+            const countLabel = document.getElementById('scan-count');
+            
+            textarea.value = scannedItems.join('\n');
+            countLabel.innerText = `${scannedItems.length} รายการ`;
+            
+            // Auto scroll textarea to bottom to show recent scan
+            textarea.scrollTop = textarea.scrollHeight;
+        }
+
+        // Clear All List
+        function clearList() {
+            if (scannedItems.length === 0) return;
+            if (confirm("คุณต้องการล้างรายการบาร์โค้ดทั้งหมดใช่หรือไม่?")) {
+                scannedItems = [];
+                lastScannedCode = "";
+                updateOutputTextarea();
+                showToast("ล้างข้อมูลเรียบร้อยแล้ว");
+            }
+        }
+
+        // Copy Text to Clipboard (Safari Compatibility Fix)
+        function copyToClipboard() {
+            const text = document.getElementById('output-text').value;
+            if (!text) {
+                showToast("ไม่มีข้อมูลให้คัดลอก", true);
+                return;
+            }
+
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showToast("คัดลอกข้อความลง Clipboard แล้ว");
+                }).catch(() => {
+                    fallbackCopy(text);
+                });
+            } else {
+                fallbackCopy(text);
+            }
+        }
+
+        function fallbackCopy(text) {
+            const textarea = document.getElementById('output-text');
+            textarea.select();
+            textarea.setSelectionRange(0, 99999); // iOS support
+            try {
+                document.execCommand('copy');
+                showToast("คัดลอกข้อความแล้ว");
+            } catch (err) {
+                showToast("ไม่สามารถคัดลอกได้", true);
+            }
+        }
+
+        // Download as .txt File
+        function downloadTxtFile() {
+            const text = document.getElementById('output-text').value;
+            if (!text) {
+                showToast("ไม่มีข้อมูลสำหรับการดาวน์โหลด", true);
+                return;
+            }
+
+            const now = new Date();
+            const dateStr = now.toISOString().slice(0,10);
+            const fileName = `barcodes_${dateStr}.txt`;
+
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast(`ดาวน์โหลดไฟล์ ${fileName} แล้ว`);
+        }
+
+        // Share via iOS Native Share Sheet (Line, Email, Files, Notes, etc.)
+        async function shareData() {
+            const text = document.getElementById('output-text').value;
+            if (!text) {
+                showToast("ไม่มีข้อมูลสำหรับการส่งออก", true);
+                return;
+            }
+
+            const now = new Date();
+            const dateStr = now.toISOString().slice(0,10);
+            const fileName = `barcodes_${dateStr}.txt`;
+
+            if (navigator.share) {
+                try {
+                    // Try sharing as a File object first (best experience for iOS)
+                    const file = new File([text], fileName, { type: 'text/plain' });
+                    
+                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        await navigator.share({
+                            files: [file],
+                            title: 'รายการบาร์โค้ด',
+                            text: 'ไฟล์รายการบาร์โค้ดที่สแกนแล้ว'
+                        });
+                    } else {
+                        // Fallback to sharing plain text string
+                        await navigator.share({
+                            title: 'รายการบาร์โค้ด',
+                            text: text
+                        });
+                    }
+                    showToast("แชร์ข้อมูลสำเร็จ");
+                } catch (err) {
+                    if (err.name !== 'AbortError') {
+                        console.error("Share error:", err);
+                        showToast("การแชร์ล้มเหลว", true);
+                    }
+                }
+            } else {
+                // Fallback for browsers without Web Share API
+                copyToClipboard();
+                alert("เบราว์เซอร์นี้ไม่รองรับระบบ Share Sheet - ได้ทำการคัดลอกข้อความทั้งหมดไว้แล้ว สามารถเปิดแอป Line แล้วกดวาง (Paste) ได้เลย");
+            }
+        }
+
+        // Helper Toast Notification UI
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-msg');
+            
+            toastMsg.innerText = message;
+            toast.className = `w-full mt-2 text-xs py-2 px-3 rounded-lg text-center flex items-center justify-center space-x-1.5 transition ${
+                isError 
+                ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300' 
+                : 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
+            }`;
+
+            toast.classList.remove('hidden');
+
+            setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 2500);
+        }
+    </script>
+</body>
+</html>
