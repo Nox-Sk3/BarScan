@@ -3,181 +3,215 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Barcode Scanner Pro</title>
-    <!-- Tesseract.js for OCR -->
+    <title>Live Text Scanner 3s</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; padding: 15px; color: #333; }
-        .card { background: white; border-radius: 12px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px; }
-        h2 { font-size: 1.1rem; margin-bottom: 10px; text-align: center; color: #1a73e8; }
-        .btn-group { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 10px; }
-        button { background: #1a73e8; color: white; border: none; padding: 14px; border-radius: 8px; font-weight: bold; font-size: 1rem; cursor: pointer; text-align: center; }
-        button.success { background: #34a853; }
-        button.danger { background: #ea4335; }
-        button.warning { background: #fbbc05; color: #333; }
-        #cameraInput { display: none; }
-        .file-label { display: block; background: #e8f0fe; color: #1a73e8; text-align: center; padding: 16px; border-radius: 8px; font-weight: bold; border: 2px dashed #1a73e8; cursor: pointer; margin-bottom: 10px; font-size: 1.05rem; }
-        .manual-box { display: flex; gap: 8px; margin-bottom: 10px; }
-        .manual-box input { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 8px; }
-        textarea { width: 100%; height: 220px; font-family: monospace; font-size: 1.05rem; padding: 10px; border: 1px solid #ccc; border-radius: 8px; resize: none; background: #fafafa; line-height: 1.5; }
-        .status { font-size: 0.9rem; color: #d93025; text-align: center; margin-top: 5px; font-weight: bold; min-height: 22px; }
-        .badge { display: inline-block; background: #e6f4ea; color: #137333; padding: 3px 8px; border-radius: 12px; font-size: 0.85rem; margin-top: 5px; font-weight: bold; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #fff; padding: 12px; }
+        .container { max-width: 500px; margin: 0 auto; }
+        
+        .camera-box { position: relative; width: 100%; height: 320px; background: #000; border-radius: 16px; overflow: hidden; margin-bottom: 12px; border: 2px solid #333; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* กรอบเล็งเป้า */
+        .scan-guide { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 85%; height: 120px; border: 2px dashed #00ff66; border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4); pointer-events: none; display: flex; align-items: center; justify-content: center; }
+        .scan-guide::after { content: "วางชุดตัวเลขให้อยู่ในกรอบนี้"; color: #00ff66; font-size: 0.8rem; background: rgba(0,0,0,0.7); padding: 2px 8px; border-radius: 4px; }
+
+        /* ตัวนับถอยหลัง */
+        .countdown-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center; font-size: 5rem; font-weight: bold; color: #00ff66; z-index: 10; }
+
+        .btn-scan { width: 100%; background: #007aff; color: white; border: none; padding: 18px; border-radius: 12px; font-size: 1.2rem; font-weight: bold; cursor: pointer; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(0,122,255,0.4); active { background: #0056b3; } }
+        .btn-scan:disabled { background: #444; color: #888; box-shadow: none; }
+
+        .status { text-align: center; font-size: 0.95rem; margin-bottom: 12px; min-height: 24px; color: #ffcc00; font-weight: 500; }
+        
+        .result-box { background: #1e1e1e; border-radius: 12px; padding: 12px; }
+        .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.9rem; color: #aaa; }
+        textarea { width: 100%; height: 180px; background: #2a2a2a; color: #00ff66; border: 1px solid #444; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 1.05rem; resize: none; line-height: 1.4; }
+        
+        .action-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+        .btn-action { padding: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; color: white; }
+        .btn-share { background: #34c759; }
+        .btn-clear { background: #ff3b30; }
+        canvas { display: none; }
     </style>
 </head>
 <body>
 
-    <div class="card">
-        <h2>ระบบถ่ายรูปดึงเลขบาร์โค้ด</h2>
+<div class="container">
+    <div class="camera-box">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div class="scan-guide"></div>
+        <div id="countdown" class="countdown-overlay">3</div>
+    </div>
+
+    <button id="btnStartScan" class="btn-scan">📸 กดสแกน (นับถอยหลัง 3 วิ)</button>
+    
+    <div id="status" class="status">เปิดกล้องแล้ว ส่องตัวเลขให้อยู่ในกรอบแล้วกดปุ่ม</div>
+
+    <div class="result-box">
+        <div class="result-header">
+            <span>รายการที่บันทึก (<span id="count">0</span>)</span>
+        </div>
+        <textarea id="resultText" placeholder="ข้อมูลตัวเลขจะมาเรียงที่นี่ทีละบรรทัด..."></textarea>
         
-        <!-- ปุ่มเปิดกล้องบังคับโฟกัสใกล้ -->
-        <label for="cameraInput" class="file-label">
-            📸 แตะเพื่อถ่ายรูปป้าย (โฟกัสใกล้)
-        </label>
-        <input type="file" id="cameraInput" accept="image/*" capture="environment">
-
-        <!-- ช่องพิมพ์สำรองกรณีรูปอ่านไม่ออกจริงๆ -->
-        <div class="manual-box">
-            <input type="text" id="manualInput" placeholder="พิมพ์เลข เช่น 1111014 E 70011 00000">
-            <button id="btnAddManual" class="warning" style="padding: 0 15px;">เพิ่ม</button>
+        <div class="action-btns">
+            <button id="btnShare" class="btn-action btn-share">📤 ส่งออก / แชร์</button>
+            <button id="btnClear" class="btn-action btn-clear">ล้างทั้งหมด</button>
         </div>
-
-        <div class="btn-group">
-            <button id="btnShare" class="success">📤 ส่งออก / แชร์ข้อมูลทั้งหมด</button>
-        </div>
-
-        <div id="status" class="status">พร้อมใช้งาน: ถ่ายรูปป้ายให้เห็นตัวเลขชัดเจน</div>
     </div>
+</div>
 
-    <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <strong>รายการข้อมูล (<span id="count">0</span> บรรทัด)</strong>
-            <button id="btnClear" class="danger" style="padding: 4px 10px; font-size: 0.8rem;">ล้างทั้งหมด</button>
-        </div>
-        <textarea id="resultText" placeholder="ข้อมูลจะเรียงลงมาทีละบรรทัดที่นี่..."></textarea>
-    </div>
+<canvas id="captureCanvas"></canvas>
 
-    <script>
-        const cameraInput = document.getElementById('cameraInput');
-        const statusDiv = document.getElementById('status');
-        const resultText = document.getElementById('resultText');
-        const countSpan = document.getElementById('count');
-        const manualInput = document.getElementById('manualInput');
-        const btnAddManual = document.getElementById('btnAddManual');
+<script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('captureCanvas');
+    const btnStartScan = document.getElementById('btnStartScan');
+    const countdownEl = document.getElementById('countdown');
+    const statusEl = document.getElementById('status');
+    const resultText = document.getElementById('resultText');
+    const countSpan = document.getElementById('count');
 
-        let lastResult = '';
-        let lastTime = 0;
+    // แพตเทิร์นจับเฉพาะตัวเลขบาร์โค้ด เช่น 1111014 E 70011 00000 หรือ 0811001 E 77000 77150
+    const barcodeRegex = /(\d{7})\s*([A-Za-z]{1,2})\s*(\d{5})\s*(\d{5})/;
 
-        // รูปแบบตัวเลขบนป้าย เช่น 1111014 E 70011 00000
-        const barcodeRegex = /\b(\d{7})\s*([A-Za-z]{1,2})\s*(\d{5})\s*(\d{5})\b/;
-
-        function updateCount() {
-            const lines = resultText.value.trim().split('\n').filter(l => l.length > 0);
-            countSpan.innerText = lines.length;
-        }
-
-        function appendResult(code) {
-            const now = Date.now();
-            if (code === lastResult && (now - lastTime) < 2000) return;
-            
-            lastResult = code;
-            lastTime = now;
-
-            if (resultText.value.length > 0 && !resultText.value.endsWith('\n')) {
-                resultText.value += '\n';
-            }
-            resultText.value += code;
-            updateCount();
-
-            if (navigator.vibrate) navigator.vibrate(100);
-            playBeep();
-        }
-
-        function playBeep() {
-            try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(800, ctx.currentTime);
-                osc.connect(ctx.destination);
-                osc.start();
-                osc.stop(ctx.currentTime + 0.1);
-            } catch (e) {}
-        }
-
-        // เพิ่มข้อมูลจากช่องพิมพ์เอง
-        btnAddManual.addEventListener('click', () => {
-            const val = manualInput.value.trim();
-            if (val) {
-                appendResult(val);
-                manualInput.value = '';
-                statusDiv.innerHTML = `<span class="badge">✓ บันทึกด้วยมือสำเร็จ</span>`;
-            }
-        });
-
-        // ระบบประมวลผลภาพถ่าย (OCR)
-        cameraInput.addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            statusDiv.innerText = '⌛ กำลังแกะรอยตัวเลขจากภาพ...';
-
-            try {
-                const worker = await Tesseract.createWorker('eng');
-                await worker.setParameters({
-                    tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',
-                });
-
-                const ret = await worker.recognize(file);
-                await worker.terminate();
-
-                const text = ret.data.text;
-                console.log("OCR Text:", text);
-
-                const match = text.match(barcodeRegex);
-
-                if (match) {
-                    const formattedCode = `${match[1]} ${match[2].toUpperCase()} ${match[3]} ${match[4]}`;
-                    appendResult(formattedCode);
-                    statusDiv.innerHTML = `<span class="badge">✓ อ่านสำเร็จ: ${formattedCode}</span>`;
-                } else {
-                    statusDiv.innerText = '⚠️ อ่านไม่เจอรูปแบบตัวเลข ลองกดถ่ายใหม่ให้ใกล้และชัดขึ้น หรือพิมพ์ใส่ช่องด้านบนได้เลยครับ';
+    // เปิดกล้อง iPhone อัตโนมัติ
+    async function initCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: { ideal: "environment" },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
                 }
-            } catch (err) {
-                console.error(err);
-                statusDiv.innerText = '❌ เกิดข้อผิดพลาดในการประมวลผลรูปภาพ';
-            }
-            cameraInput.value = '';
-        });
+            });
+            video.srcObject = stream;
+        } catch (err) {
+            statusEl.innerText = "❌ ไม่สามารถเข้าถึงกล้องได้ กรุณากดอนุญาตสิทธิ์ใช้งานกล้อง";
+            statusEl.style.color = "#ff3b30";
+        }
+    }
 
-        // ส่งออกแชร์
-        document.getElementById('btnShare').addEventListener('click', async () => {
-            const text = resultText.value.trim();
-            if (!text) {
-                alert('ยังไม่มีข้อมูลให้ส่งออก');
-                return;
-            }
+    function updateCount() {
+        const lines = resultText.value.trim().split('\n').filter(l => l.length > 0);
+        countSpan.innerText = lines.length;
+    }
 
-            if (navigator.share) {
-                try {
-                    await navigator.share({
-                        title: 'รายการบาร์โค้ด',
-                        text: text
-                    });
-                } catch (err) {}
+    function playBeep() {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(1000, ctx.currentTime);
+            osc.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.15);
+        } catch (e) {}
+    }
+
+    // เริ่มกระบวนการนับถอยหลัง 3 วินาที
+    btnStartScan.addEventListener('click', () => {
+        btnStartScan.disabled = true;
+        countdownEl.style.display = 'flex';
+        let count = 3;
+        countdownEl.innerText = count;
+
+        statusEl.innerText = "ถือนิ้วไว้นิ่งๆ ระบบกำลังโฟกัสภาพ...";
+        statusEl.style.color = "#ffcc00";
+
+        const timer = setInterval(() => {
+            count--;
+            if (count > 0) {
+                countdownEl.innerText = count;
             } else {
-                navigator.clipboard.writeText(text);
-                alert('คัดลอกข้อความทั้งหมดลงคลิปบอร์ดแล้ว!');
+                clearInterval(timer);
+                countdownEl.style.display = 'none';
+                captureAndProcess();
             }
-        });
+        }, 1000);
+    });
 
-        document.getElementById('btnClear').addEventListener('click', () => {
-            if (confirm('ต้องการล้างข้อมูลทั้งหมดหรือไม่?')) {
-                resultText.value = '';
+    // จับภาพจากกล้องแล้วส่งไปประมวลผล OCR
+    async function captureAndProcess() {
+        statusEl.innerText = "⌛ กำลังอ่านตัวเลขจากภาพ...";
+        
+        // วาดภาพจากวิดีโอลง canvas
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        try {
+            const worker = await Tesseract.createWorker('eng');
+            await worker.setParameters({
+                tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ ',
+            });
+
+            const ret = await worker.recognize(canvas);
+            await worker.terminate();
+
+            const text = ret.data.text;
+            console.log("OCR Result:", text);
+
+            const match = text.match(barcodeRegex);
+
+            if (match) {
+                const formattedCode = `${match[1]} ${match[2].toUpperCase()} ${match[3]} ${match[4]}`;
+                
+                // บันทึกลง textarea
+                if (resultText.value.length > 0 && !resultText.value.endsWith('\n')) {
+                    resultText.value += '\n';
+                }
+                resultText.value += formattedCode;
                 updateCount();
-                statusDiv.innerText = 'ล้างข้อมูลเรียบร้อย';
+
+                if (navigator.vibrate) navigator.vibrate(150);
+                playBeep();
+
+                statusEl.innerText = `✓ บันทึกสำเร็จ: ${formattedCode}`;
+                statusEl.style.color = "#00ff66";
+            } else {
+                statusEl.innerText = "⚠️ อ่านไม่เจอตัวเลข! ลองขยับมุมกล้องให้อยู่ในกรอบแล้วกดใหม่";
+                statusEl.style.color = "#ff9500";
             }
-        });
-    </script>
+        } catch (err) {
+            console.error(err);
+            statusEl.innerText = "❌ เกิดข้อผิดพลาดในการอ่านภาพ";
+            statusEl.style.color = "#ff3b30";
+        }
+
+        btnStartScan.disabled = false;
+    }
+
+    // ปุ่มแชร์ข้อมูล
+    document.getElementById('btnShare').addEventListener('click', async () => {
+        const text = resultText.value.trim();
+        if (!text) return alert('ยังไม่มีข้อมูลให้ส่งออก');
+
+        if (navigator.share) {
+            try {
+                await navigator.share({ title: 'รายการบาร์โค้ด', text: text });
+            } catch (err) {}
+        } else {
+            navigator.clipboard.writeText(text);
+            alert('คัดลอกข้อความลง Clipboard แล้ว!');
+        }
+    });
+
+    // ปุ่มล้างข้อมูล
+    document.getElementById('btnClear').addEventListener('click', () => {
+        if (confirm('ต้องการล้างข้อมูลทั้งหมดหรือไม่?')) {
+            resultText.value = '';
+            updateCount();
+            statusEl.innerText = 'ล้างข้อมูลเรียบร้อย';
+            statusEl.style.color = "#ffcc00";
+        }
+    });
+
+    // เปิดกล้องทันทีที่เข้าเว็บ
+    initCamera();
+</script>
+
 </body>
 </html>
