@@ -13,7 +13,7 @@
         .camera-box { position: relative; width: 100%; height: 420px; background: #000; border-radius: 16px; overflow: hidden; margin-bottom: 12px; border: 2px solid #333; }
         video { width: 100%; height: 100%; object-fit: cover; }
 
-        .scan-guide { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 94%; height: 280px; border: 2px dashed #00ff66; border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.8); pointer-events: none; transition: background 0.2s, border-color 0.2s; }
+        .scan-guide { z-index: 6; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 94%; height: 280px; border: 2px dashed #00ff66; border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.8); pointer-events: none; transition: background 0.2s, border-color 0.2s; }
         .scan-guide::after { content: "วางป้ายให้อยู่ในกรอบ (ไม่ต้องพอดีบรรทัด)"; position: absolute; top: -28px; left: 50%; transform: translateX(-50%); white-space: nowrap; color: #00ff66; font-size: 0.8rem; background: rgba(0,0,0,0.7); padding: 2px 8px; border-radius: 4px; }
         .scan-guide.active { border-color: #ffcc00; }
         .scan-guide.flash { background: rgba(0, 255, 102, 0.35); border: 3px solid #00ff66; }
@@ -42,6 +42,16 @@
         .btn-action { padding: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; color: white; }
         .btn-share { background: #34c759; }
         .btn-clear { background: #ff3b30; }
+        .btn-row { display: grid; grid-template-columns: 1.3fr 1fr; gap: 8px; margin-bottom: 12px; }
+        .btn-row .btn-scan { margin-bottom: 0; padding: 18px 8px; font-size: 1.1rem; }
+        .btn-scan.alt { background: #3a3a3c; box-shadow: none; }
+        .btn-scan.alt.running { background: #ff9500; }
+        .btn-scan.alt:disabled { background: #2a2a2a; color: #666; }
+        .freeze { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: none; z-index: 5; }
+        .freeze.on { display: block; }
+        .confirm-bar { display: none; background: #1e1e1e; border: 1px solid #ff9500; border-radius: 10px; padding: 10px; margin-bottom: 12px; text-align: center; font-size: 0.9rem; word-break: break-all; }
+        .confirm-bar.on { display: block; }
+        .confirm-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
     </style>
 </head>
 <body>
@@ -49,13 +59,25 @@
 <div class="container">
     <div class="camera-box">
         <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="freeze" class="freeze"></canvas>
         <div class="scan-guide" id="guide"></div>
     </div>
 
-    <button id="btnScan" class="btn-scan" disabled>⏳ กำลังโหลดตัวอ่าน...</button>
+    <div class="btn-row">
+        <button id="btnShot" class="btn-scan shot" disabled>📸 กดถ่าย</button>
+        <button id="btnScan" class="btn-scan alt" disabled>⏳ กำลังโหลด...</button>
+    </div>
 
     <div id="status" class="status">กำลังเปิดกล้อง...</div>
     <div id="meter" class="meter"></div>
+
+    <div id="confirmBar" class="confirm-bar">
+        <div id="confirmText"></div>
+        <div class="confirm-btns">
+            <button id="btnConfirmSave" class="btn-action btn-share">💾 บันทึก</button>
+            <button id="btnConfirmRetake" class="btn-action btn-clear">🔄 ถ่ายใหม่</button>
+        </div>
+    </div>
 
     <div class="live-box">
         <input id="liveInput" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"
@@ -93,6 +115,10 @@
     const debugCanvas = document.getElementById('captureCanvas');
     const rawTextEl = document.getElementById('rawText');
     const liveInput = document.getElementById('liveInput');
+    const btnShot = document.getElementById('btnShot');
+    const freezeCv = document.getElementById('freeze');
+    const confirmBar = document.getElementById('confirmBar');
+    const confirmText = document.getElementById('confirmText');
 
     // ---- ค่าที่ปรับได้ ----
     const TICK_MS = 120;          // ความถี่เช็กความคม
@@ -120,8 +146,9 @@
     function refreshButton() {
         if (cameraReady && ocrReady) {
             btnScan.disabled = false;
-            btnScan.innerText = "▶️ เริ่มสแกนต่อเนื่อง";
-            setStatus("พร้อมแล้ว กดเริ่มแล้วส่องป้ายค้างไว้");
+            btnScan.innerText = "▶️ ต่อเนื่อง";
+            btnShot.disabled = false;
+            setStatus("พร้อมแล้ว กดถ่าย หรือกดต่อเนื่องแล้วส่องป้ายค้างไว้");
         }
     }
 
@@ -166,8 +193,8 @@
     }
 
     // ---------- แปลงพิกัดกรอบเขียว -> พิกัดในภาพวิดีโอ (object-fit: cover) ----------
-    function getGuideSource() {
-        const vw = video.videoWidth, vh = video.videoHeight;
+    function getGuideSource(src = video) {
+        const vw = src.videoWidth || src.width, vh = src.videoHeight || src.height;
         const box = video.getBoundingClientRect();
         const g = guideEl.getBoundingClientRect();
         const scale = Math.max(box.width / vw, box.height / vh);
@@ -188,11 +215,11 @@
     const sCanvas = document.createElement('canvas');
     const sCtx = sCanvas.getContext('2d', { willReadFrequently: true });
 
-    function measureSharpness() {
-        const { sx, sy, sw, sh } = getGuideSource();
+    function measureSharpness(src = video) {
+        const { sx, sy, sw, sh } = getGuideSource(src);
         const W = 320, H = Math.max(24, Math.round(W * sh / sw));
         sCanvas.width = W; sCanvas.height = H;
-        sCtx.drawImage(video, sx, sy, sw, sh, 0, 0, W, H);
+        sCtx.drawImage(src, sx, sy, sw, sh, 0, 0, W, H);
         const d = sCtx.getImageData(0, 0, W, H).data;
         const g = new Uint8Array(W * H);
         for (let i = 0, p = 0; i < g.length; i++, p += 4) {
@@ -212,14 +239,14 @@
     const wCanvas = document.createElement('canvas');
     const wCtx = wCanvas.getContext('2d', { willReadFrequently: true });
 
-    function buildWork() {
-        const { sx, sy, sw, sh } = getGuideSource();
+    function buildWork(src = video) {
+        const { sx, sy, sw, sh } = getGuideSource(src);
         const up = Math.min(3, Math.max(1, 1600 / sw));
         const w = Math.round(sw * up), h = Math.round(sh * up);
         wCanvas.width = w; wCanvas.height = h;
         wCtx.imageSmoothingEnabled = true;
         wCtx.imageSmoothingQuality = 'high';
-        wCtx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+        wCtx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
         const d = wCtx.getImageData(0, 0, w, h).data;
         const gray = new Uint8Array(w * h);
         for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
@@ -444,8 +471,8 @@
     }
 
     // ---------- ประมวลผลหนึ่งเฟรม ----------
-    async function processFrame() {
-        const { gray, w, h } = buildWork();
+    async function processFrame(src = video) {
+        const { gray, w, h } = buildWork(src);
         const N = normalize(gray, w, h);
         const cands = buildCandidates(N, w, h);
 
@@ -594,19 +621,160 @@
             } catch (e) {}
             scanning = true;
             history = []; bestSharp = 0; lastSaved = null;
-            btnScan.innerText = "⏹ หยุดสแกน";
+            btnScan.innerText = "⏹ หยุด";
             btnScan.classList.add('running');
             guideEl.classList.add('active');
             setStatus("กำลังสแกน... ส่องป้ายค้างไว้");
             tick();
         } else {
             scanning = false;
-            btnScan.innerText = "▶️ เริ่มสแกนต่อเนื่อง";
+            btnScan.innerText = "▶️ ต่อเนื่อง";
             btnScan.classList.remove('running');
             guideEl.classList.remove('active');
             meterEl.innerText = '';
             setStatus("หยุดสแกนแล้ว");
         }
+    });
+
+    // ---------- โหมดกดถ่าย: เก็บภาพ ~1.2 วิ เลือกภาพที่คมที่สุด ฟรีสหน้าจอ แล้วอ่านจากภาพนิ่ง ----------
+    const BURST_FRAMES = 10, BURST_GAP = 110, KEEP_FRAMES = 3, SNAP_MAX_W = 2560;
+    let shotBusy = false, pendingShotCode = null;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    function snapshot() {
+        const vw = video.videoWidth, vh = video.videoHeight;
+        const k = Math.min(1, SNAP_MAX_W / vw);
+        const c = document.createElement('canvas');
+        c.width = Math.round(vw * k); c.height = Math.round(vh * k);
+        c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+        return c;
+    }
+
+    function showFreeze(c) {
+        freezeCv.width = c.width; freezeCv.height = c.height;
+        freezeCv.getContext('2d').drawImage(c, 0, 0);
+        freezeCv.classList.add('on');
+    }
+    function hideFreeze() { freezeCv.classList.remove('on'); }
+
+    function hideConfirm() { confirmBar.classList.remove('on'); pendingShotCode = null; }
+    function showConfirm(code, msg) {
+        pendingShotCode = code;
+        confirmText.textContent = `${msg}\n${code}`;
+        confirmText.style.whiteSpace = 'pre-line';
+        confirmBar.classList.add('on');
+    }
+
+    function saveShot(code) {
+        const lines = resultText.value.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length && lines[lines.length - 1] === code) {
+            setStatus(`⚠️ ${code} ซ้ำกับรายการล่าสุด ไม่ได้บันทึกซ้ำ`, "#ff9500");
+            return false;
+        }
+        const usualDate = modalDate();
+        addCode(code);
+        lastSaved = code; lastReadTime = Date.now();
+        if (navigator.vibrate) navigator.vibrate(150);
+        playBeep();
+        flashGuide();
+        if (usualDate && code.slice(0, 4) !== usualDate) {
+            setTimeout(playBeep, 220);
+            setStatus(`⚠️ บันทึกแล้ว: ${code} แต่วันที่ ${code.slice(0, 4)} ต่างจากส่วนใหญ่ (${usualDate}) ตรวจอีกที`, "#ff9500");
+        } else {
+            setStatus(`✓ บันทึกสำเร็จ: ${code}`, "#00ff66");
+        }
+        return true;
+    }
+
+    // ยืนยันเมื่อมี 2 ภาพอ่านได้ตรงกัน หรือ 3 ภาพโหวตทีละตำแหน่งได้
+    function decideShot(reads) {
+        const cnt = {};
+        reads.forEach(c => { cnt[c] = (cnt[c] || 0) + 1; });
+        for (const c in cnt) if (cnt[c] >= 2) return c;
+        if (reads.length >= 3) return consensus(reads);
+        return null;
+    }
+
+    async function captureShot() {
+        if (shotBusy || scanning || !cameraReady || !ocrReady) return;
+        shotBusy = true;
+        btnShot.disabled = true; btnScan.disabled = true;
+        hideConfirm(); hideFreeze();
+        try {
+            try {
+                audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+                audioCtx.resume();
+            } catch (e) {}
+
+            setStatus("📸 ถือนิ่งๆ กำลังเก็บภาพ...", "#ffcc00");
+            guideEl.classList.add('active');
+
+            const top = [];
+            for (let i = 0; i < BURST_FRAMES; i++) {
+                if (video.readyState >= 2 && video.videoWidth) {
+                    const sc = measureSharpness();
+                    if (top.length < KEEP_FRAMES || sc > top[top.length - 1].sc) {
+                        top.push({ c: snapshot(), sc });
+                        top.sort((a, b) => b.sc - a.sc);
+                        if (top.length > KEEP_FRAMES) top.length = KEEP_FRAMES;
+                    }
+                }
+                await sleep(BURST_GAP);
+            }
+            guideEl.classList.remove('active');
+
+            if (!top.length || top[0].sc < MIN_SHARP) {
+                setStatus("⚠️ ไม่เจอป้ายในกรอบ หรือภาพเบลอ กดถ่ายใหม่ได้เลย", "#ff9500");
+                return;
+            }
+
+            showFreeze(top[0].c);
+            setStatus("🧊 จับภาพแล้ว กำลังอ่าน...", "#ffcc00");
+
+            const reads = [];
+            let accepted = null;
+            for (const f of top) {
+                const code = await processFrame(f.c);
+                if (code) {
+                    reads.push(code);
+                    accepted = decideShot(reads);
+                    if (accepted) break;
+                }
+            }
+
+            if (accepted) {
+                saveShot(accepted);
+                await sleep(1200);   // ค้างภาพไว้ให้ตรวจด้วยตา
+                hideFreeze();
+            } else if (reads.length) {
+                const why = reads.length === 1 ? 'อ่านได้ภาพเดียว' : 'อ่านได้แต่แต่ละภาพไม่ตรงกัน';
+                showConfirm(reads[0], `${why} ยังยืนยันไม่ได้`);
+                setStatus("⚠️ เทียบกับภาพที่ค้างบนจอ ถ้าถูกกดบันทึก ถ้าไม่ถูกกดถ่ายใหม่", "#ff9500");
+            } else {
+                setStatus("⚠️ อ่านไม่ได้ ลองถ่ายใหม่ (ถือให้นิ่งและให้ตัวเลขอยู่ในกรอบ)", "#ff9500");
+                await sleep(700);
+                hideFreeze();
+            }
+        } catch (err) {
+            console.error(err);
+            guideEl.classList.remove('active');
+            hideFreeze();
+            setStatus("❌ เกิดข้อผิดพลาด: " + err.message, "#ff3b30");
+        } finally {
+            shotBusy = false;
+            btnShot.disabled = false; btnScan.disabled = false;
+        }
+    }
+
+    btnShot.addEventListener('click', captureShot);
+    document.getElementById('btnConfirmSave').addEventListener('click', () => {
+        const c = pendingShotCode;
+        hideConfirm(); hideFreeze();
+        if (c) saveShot(c);
+    });
+    document.getElementById('btnConfirmRetake').addEventListener('click', () => {
+        hideConfirm(); hideFreeze();
+        setStatus("พร้อมถ่ายใหม่");
     });
 
     // ---------- ช่อง Live Text ----------
